@@ -1,0 +1,60 @@
+name: Build SnakeByte APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main", "master" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          gradle-version: '8.7'
+
+      - name: Unpack project zip and find project folder
+        id: loc
+        run: |
+          if [ -z "$(find . -name settings.gradle -not -path './.git/*' | head -n 1)" ]; then
+            Z=$(find . -maxdepth 1 -name '*.zip' | head -n 1)
+            if [ -z "$Z" ]; then echo "No project files and no .zip found in the repo. Upload the project zip."; exit 1; fi
+            echo "Unpacking $Z"
+            mkdir -p _project && unzip -q "$Z" -d _project
+          fi
+          F=$(find . -name settings.gradle -not -path './.git/*' | head -n 1)
+          if [ -z "$F" ]; then echo "settings.gradle not found"; exit 1; fi
+          DIR=$(dirname "$F")
+          echo "Project folder: $DIR"
+          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Install Android SDK packages
+        run: |
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/android-sdk}}"
+          SM=$(find "$SDK" /usr/local/lib/android -name sdkmanager -type f 2>/dev/null | head -n 1 || true)
+          if [ -n "$SM" ]; then
+            yes | "$SM" --licenses > /dev/null || true
+            "$SM" "platforms;android-35" "build-tools;35.0.0" || true
+          fi
+
+      - name: Build debug APK
+        working-directory: ${{ steps.loc.outputs.dir }}
+        run: |
+          if [ -f gradlew ]; then chmod +x gradlew && ./gradlew assembleDebug --stacktrace --no-daemon; else gradle assembleDebug --stacktrace --no-daemon; fi
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v5
+        with:
+          name: SnakeByte-debug-apk
+          path: ${{ steps.loc.outputs.dir }}/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
